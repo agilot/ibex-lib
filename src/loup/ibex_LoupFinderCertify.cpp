@@ -16,7 +16,7 @@ namespace ibex {
 
 using namespace std;
 
-LoupFinderCertify::LoupFinderCertify(const System& sys, LoupFinder& finder) : sys(sys), has_equality(false), finder(finder) {
+LoupFinderCertify::LoupFinderCertify(const System& sys, LoupFinder& finder, double eps_h) : sys(sys), eps_h(eps_h), has_equality(false), finder(finder) {
 
 	if (sys.nb_ctr>0)
 		// ==== check if the system contains equalities ====
@@ -46,54 +46,78 @@ std::pair<IntervalVector, double> LoupFinderCertify::find(const IntervalVector& 
 	if (pseudo_loup_found && !has_equality)
 		return p;
 
-	// Loop until the number of active constraints is less
-	// than the number of variables (we cannot make proofs
-	// with overconstrained sytems)
+	// The activity threshold decides which inequalities are treated as tight
+	// when assembling the square system the Hansen test works on. A single
+	// threshold is not enough, because two distinct situations defeat it and
+	// both are cured by lowering it:
+	//
+	//  - too many active constraints: the system is overconstrained and no
+	//    proof is possible at all (this was the only case handled before);
+	//
+	//  - a feasible region thinner than the threshold: both sides of a
+	//    two-sided constraint (-eps <= g(x) <= eps with eps below the
+	//    threshold) are seen as tight at once, so the square system demands
+	//    g(x)==-eps and g(x)==+eps simultaneously. That is unsatisfiable, so
+	//    Newton inflation returns MAYBE forever while the active set stays
+	//    small enough to look perfectly well-posed.
+	//
+	// So we retry with progressively more selective active sets instead of
+	// giving up after a single attempt. max_activity_trials bounds the extra
+	// Hansen tests spent on a box that simply cannot be certified.
 
-	FncActiveCtrs *af = NULL;
+	double threshold = eps_h;
+	bool overconstrained = false;
 
-	// TODO : how to fix initial detection threshold in a more adaptative way?
-	double eps_h = NormalizedSystem::default_eps_h;
+	for (int trial=0; trial<=max_activity_trials && threshold>min_activity_thershold;
+			trial++, threshold/=2.) {
 
-	do {
+		FncActiveCtrs* af;
+
 		try {
-			// try with a smaller threshold...
-			if (af) delete af;
-			af = new FncActiveCtrs(sys,epsbox.lb(),eps_h,false);
+			af = new FncActiveCtrs(sys,epsbox.lb(),threshold,false);
 		} catch(FncActiveCtrs::NothingActive&) {
 			if (pseudo_loup_found)
 				return p;
 			else
 				throw NotFound();
 		}
-		eps_h /= 2.;
-	} while (af->image_dim() > sys.nb_var && eps_h>min_activity_thershold);
-	if (af->image_dim() > sys.nb_var) {
-		ibex_warning("too many active constraints, cannot prove feasibility -> loup lost!");
-		delete af;
-		throw NotFound();
-	}
 
-	// ====================================================
-	// solution #1: we inflate the loup-point and
-	//              call Hansen test in contracting mode.
-	//	epsbox.inflate(NormalizedSystem::default_eps_h);
-	//	PdcHansenFeasibility pdc(af, false);
-	// ====================================================
+		// we cannot make proofs with overconstrained systems
+		if (af->image_dim() > sys.nb_var) {
+			delete af;
+			overconstrained = true;
+			continue;
+		}
+		overconstrained = false;
 
-	// ====================================================
-	// solution #2: we call Hansen test in inflating mode.
-	PdcHansenFeasibility pdc(*af, true);
-	// ====================================================
+		// ====================================================
+		// solution #1: we inflate the loup-point and
+		//              call Hansen test in contracting mode.
+		//	epsbox.inflate(NormalizedSystem::default_eps_h);
+		//	PdcHansenFeasibility pdc(af, false);
+		// ====================================================
 
-	// TODO: maybe we should check first if the epsbox is inner...
-	// otherwise the probability to get a feasible point is
-	// perhaps too small?
+		// ====================================================
+		// solution #2: we call Hansen test in inflating mode.
+		PdcHansenFeasibility pdc(*af, true);
+		// ====================================================
 
-	// TODO: HansenFeasibility uses midpoint
-	//       but maybe we should use random
+		// TODO: maybe we should check first if the epsbox is inner...
+		// otherwise the probability to get a feasible point is
+		// perhaps too small?
 
-	if (pdc.test(epsbox)==YES) {
+		// TODO: HansenFeasibility uses midpoint
+		//       but maybe we should use random
+
+		if (pdc.test(epsbox)!=YES) {
+			// the proof failed: a more selective active set may still succeed.
+			delete af;
+			continue;
+		}
+
+		// The proof succeeded. Whether or not the certified point turns out
+		// to be usable, a smaller threshold would not change that, so this
+		// is the last iteration either way.
 		Interval resI = sys.goal->eval(pdc.solution());
 		if (!resI.is_empty()) {
 			double res=resI.ub();
@@ -128,10 +152,15 @@ std::pair<IntervalVector, double> LoupFinderCertify::find(const IntervalVector& 
 				}
 			}
 		}
+
+		delete af;
+		throw NotFound();
 	}
 
 	//===========================================================
-	delete af;
+	if (overconstrained)
+		ibex_warning("too many active constraints, cannot prove feasibility -> loup lost!");
+
 	throw NotFound();
 }
 

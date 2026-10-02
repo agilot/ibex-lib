@@ -212,7 +212,7 @@ LoupFinder& DefaultOptimizerConfig::get_loup_finder() {
 
 	const NormalizedSystem& norm_sys = get_norm_sys();
 
-	return rec(rigor? (LoupFinder*) new LoupFinderCertify(sys,rec(new LoupFinderDefault(norm_sys, inHC4))) :
+	return rec(rigor? (LoupFinder*) new LoupFinderCertify(sys,rec(new LoupFinderDefault(norm_sys, inHC4)),eps_h) :
 			(LoupFinder*) new LoupFinderDefault(norm_sys, inHC4), LOUP_FINDER_TAG);
 }
 

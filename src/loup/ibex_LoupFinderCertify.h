@@ -12,6 +12,7 @@
 
 #include "ibex_LoupFinder.h"
 #include "ibex_Exception.h"
+#include "ibex_NormalizedSystem.h"
 
 #include <utility>
 
@@ -35,8 +36,16 @@ public:
 	/**
 	 * \param sys    - The real system (that is, without relaxation).
 	 * \param finder - A loup finder for the relaxed system.
+	 * \param eps_h  - Initial threshold for an inequality to be considered
+	 *                 as active. Should match the equality thickness used
+	 *                 to relax the system. A feasible region thinner than
+	 *                 this threshold makes both sides of a two-sided
+	 *                 constraint look active at once, so the threshold is
+	 *                 lowered on the fly when the proof fails (see
+	 *                 #max_activity_trials).
 	 */
-	LoupFinderCertify(const System& sys, LoupFinder& finder);
+	LoupFinderCertify(const System& sys, LoupFinder& finder,
+			double eps_h=NormalizedSystem::default_eps_h);
 
 	/**
 	 * \brief Find a new loup in a given box.
@@ -58,12 +67,24 @@ public:
 	 */
 	const double min_activity_thershold = 1e-20;
 
+	/**
+	 * Maximal number of times the activity threshold is halved after a
+	 * failed feasibility proof. Each retry costs one Hansen test, so this
+	 * bounds the extra work spent on a box that cannot be certified.
+	 */
+	const int max_activity_trials = 10;
+
 protected:
 
 	/**
 	 * \brief The NLP problem.
 	 */
 	const System& sys;
+
+	/**
+	 * \brief Initial activity detection threshold.
+	 */
+	const double eps_h;
 
 	/**
 	 * \brief True iff there is an equality.

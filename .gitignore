@@ -39,10 +39,16 @@ __build__
 
 # ibex generated obj
 build
+build-release
 lib
 include
 share
 bin
+# "bin" above matches any directory of that name, including the source
+# directory src/bin/. Its contents are tracked sources, not build output:
+# without this, a new file there is invisible to git add and a commit can
+# land a CMakeLists change with no source behind it.
+!src/bin/
 doc/images/*.png
 doc/_build
 

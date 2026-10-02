@@ -36,7 +36,7 @@
  set(sources
      soplex/changesoplex.cpp
      soplex/clufactor.cpp
-@@ -158,81 +156,28 @@
+@@ -158,81 +156,29 @@
      soplex/vector.h
      soplex/wallclocktimer.h)
  
@@ -135,6 +135,7 @@
 +  "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
 +  "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/soplex>"
 +                              "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>")
++target_link_libraries (soplex PUBLIC ${libs})
 +
 +install (FILES soplex.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 +install (FILES ${headers} DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/soplex)
