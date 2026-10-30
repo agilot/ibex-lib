@@ -81,6 +81,10 @@
 // variable and relate it to the exact one with an assertion; asking about the
 // float semantics of the term itself is not a question this server answers.
 //
+// Functions are partial: a point where a term is undefined, such as (log x) at
+// x<=0 or a division by zero, is not a solution. An objective undefined on every
+// feasible point therefore answers unsat.
+//
 // PROTOCOL
 // --------
 // One S-expression per command, replies on stdout in SMT-LIB shape. Commands
@@ -153,9 +157,12 @@
 //                                              search space.
 //   Optimizer::SUCCESS             -> sat      a point was found AND the optimum
 //                                              was bracketed to the tolerances.
-//   Optimizer::UNBOUNDED_OBJ       -> sat      feasible; objective unbounded, so
-//                                              get-objectives reports an
-//                                              infinite endpoint.
+//   Optimizer::UNBOUNDED_OBJ       -> sat      a point was found and the objective
+//                                              has no finite bound, so
+//                                              get-objectives reports an infinite
+//                                              endpoint. Without a point this is
+//                                              unknown: the status alone does not
+//                                              prove feasibility.
 //   NO_FEASIBLE_FOUND, TIME_OUT,
 //   UNREACHED_PREC                 -> unknown  nothing was proved either way.
 //
@@ -182,7 +189,9 @@
 //
 // Nothing here rounds to nearest, so nothing can put a value in front of Ibex
 // that is not the number the client wrote. That is the whole reason the decimal
-// case is arithmetic rather than a strtod call.
+// case is arithmetic rather than a strtod call. A mantissa above 2^53 is enclosed
+// the same way, and a literal beyond the double range is refused, because it has
+// no finite enclosure.
 //
 // The enclosures are computed with Ibex's own outward-rounded arithmetic because
 // Ibex has no exact rational type. Computing m/(double)10^k in C++ and wrapping
@@ -216,12 +225,9 @@
 // taken OUTWARD, so the search box encloses the asserted one, and anything that
 // is not exactly that shape stays a constraint.
 //
-// One consequence to know: a lifted strict bound is relaxed to a non-strict one,
-// because a box endpoint is a single double and Ibex's search does not
-// distinguish the two. The feasible set is therefore enlarged by at most its
-// boundary. For a bound that must hold strictly, assert it in a form that does
-// not lift -- (< 0 (* 1 x)) -- and it will be kept as a constraint, where
-// Ibex's own CmpOp records LT.
+// A box endpoint is a single double and cannot exclude itself, so a strict bound
+// is lifted AND kept as a constraint, where Ibex's own CmpOp records LT. A point
+// on the boundary is therefore never reported as a model.
 //
 // OPTIONS
 // -------
@@ -348,18 +354,22 @@
 // ibex_error() calls exit(-1) (ibex_Exception.cpp:20) and no handler can stop
 // it. Commands are validated before Ibex sees them wherever that is possible,
 // and ibex::Exception is caught, but a library-internal ibex_error will still
-// take the process down.
+// take the process down. So will a chain of many thousands of definitions, which
+// overflows the stack (measured: from about 8000 links).
 //============================================================================
 
 #include "ibex.h"
 #include "parse_args.h"
 
+#include <cctype>
 #include <cerrno>
 #include <cfenv>
+#include <climits>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iostream>
 #include <map>
 #include <sstream>
 #include <string>
@@ -508,6 +518,19 @@ typedef enum { FORM_OK, FORM_EOF, FORM_INCOMPLETE, FORM_ERROR } FormStatus;
  * process down through the stack rather than through an error reply. */
 const int MAX_DEPTH = 256;
 
+bool is_delim(char c) {
+	return isspace((unsigned char) c) || c == '(' || c == ')'
+	    || c == ';' || c == '"' || c == '|';
+}
+
+/* Symbols are stored decoded, so a reply has to restore the bars of any symbol
+ * that needed them: (define-fun a b () Real 0.0) is not a well-formed reply. */
+string smt_symbol(const string& s) {
+	for (size_t i = 0; i < s.size(); i++)
+		if (is_delim(s[i])) return "|" + s + "|";
+	return s;
+}
+
 class Reader {
 public:
 	Reader(const string& text) : s(text), i(0) { }
@@ -538,11 +561,6 @@ private:
 			else if (s[i] == ';') { while (i < s.size() && s[i] != '\n') i++; }
 			else break;
 		}
-	}
-
-	static bool is_delim(char c) {
-		return isspace((unsigned char) c) || c == '(' || c == ')'
-		    || c == ';' || c == '"' || c == '|';
 	}
 
 	/* SMT-LIB string: "..." with "" standing for a literal quote. */
@@ -579,7 +597,14 @@ private:
 		out.list.clear();
 		for (;;) {
 			if (i >= s.size()) return FORM_INCOMPLETE;
-			if (s[i] == '\\') { err = "'\\' is not allowed inside |...|"; return FORM_ERROR; }
+			if (s[i] == '\\') {
+				err = "'\\' is not allowed inside |...|";
+				// Resume past the closing bar, or it would open a new symbol that
+				// swallows the commands after it.
+				while (i < s.size() && s[i] != '|') i++;
+				if (i < s.size()) i++;
+				return FORM_ERROR;
+			}
 			if (s[i] == '|') { i++; return FORM_OK; }
 			out.atom += s[i++];
 		}
@@ -766,6 +791,20 @@ long long integer_text(const string& t, const char* what) {
 	return n;
 }
 
+/* (double) m rounds above 2^53, so the two halves are converted exactly and
+ * summed with Ibex's outward-rounded addition. */
+Interval enclose_integer(unsigned long long m) {
+	return Interval((double) (m >> 32)) * Interval(4294967296.0)
+	     + Interval((double) (m & 0xFFFFFFFFULL));
+}
+
+/* Beyond the double range there is no finite enclosure, and an unbounded constant
+ * leaves Ibex searching for a value it can never reach. */
+Interval finite_literal(const Interval& v, const string& t) {
+	if (v.is_unbounded()) throw ProtocolError("literal '" + t + "' exceeds the double range");
+	return v;
+}
+
 /* Encloses the exact real the literal denotes. Every arithmetic step is Ibex's
  * own, so every step rounds outward; nothing here rounds to nearest. */
 Interval parse_number_atom(const string& t) {
@@ -781,10 +820,10 @@ Interval parse_number_atom(const string& t) {
 		                             "significant digits to be enclosed");
 		if (ex < -100000 || ex > 100000)
 			throw ProtocolError("exponent of '" + t + "' out of range");
-		Interval v((double) m, (double) m);
+		Interval v = enclose_integer(m);
 		if (ex >= 0) v *= pow(Interval(2, 2), (int) ex);
 		else         v /= pow(Interval(2, 2), (int) -ex);
-		return neg ? -v : v;
+		return finite_literal(neg ? -v : v, t);
 	}
 
 	if (scan_decimal(t, m, ex, neg, ovf)) {
@@ -792,14 +831,14 @@ Interval parse_number_atom(const string& t) {
 		                             "significant digits to be enclosed");
 		if (ex < -100000 || ex > 100000)
 			throw ProtocolError("exponent of '" + t + "' out of range");
-		Interval v((double) m, (double) m);
+		Interval v = enclose_integer(m);
 		// pow(Interval,int) does handle negative exponents, but 10^-e is not a
 		// double, so multiplying by it rounds twice and 0.5 -- which is exact --
 		// would come back two ulps wide. Dividing by the positive power keeps the
 		// denominator exact up to 10^22 and leaves one outward-rounded operation.
 		if (ex >= 0) v *= pow(Interval(10, 10), (int) ex);
 		else         v /= pow(Interval(10, 10), (int) -ex);
-		return neg ? -v : v;
+		return finite_literal(neg ? -v : v, t);
 	}
 
 	throw ProtocolError("not a number: '" + t + "'");
@@ -877,6 +916,11 @@ typedef map<string, Definition> DefineMap;
 /* Names bound to already-built nodes: define-fun parameters, or one 'let'. */
 typedef map<string, const ExprNode*> Frame;
 
+/* Finished definition bodies. A body sees only its parameters and the globals, so
+ * its name and argument nodes decide the result, and building it once per pair
+ * keeps a ladder of definitions that mention each other twice from doubling. */
+typedef map<pair<string, Frame>, const ExprNode*> ExpansionMap;
+
 class Builder {
 public:
 	Builder(NodeSet& nodes, const map<string, const ExprSymbol*>& vars, const DefineMap& defs)
@@ -909,6 +953,7 @@ private:
 	const Frame* params;  // parameters of the define-fun body being built, or NULL
 	vector<Frame> lets;   // enclosing let scopes, innermost last
 	vector<string> expanding;
+	ExpansionMap expansions;
 
 	/* Reports the whole chain, because "f is circular" alone does not say which
 	 * hop to cut when the cycle runs through several definitions. */
@@ -953,6 +998,10 @@ private:
 	 * argument is evaluated once however many times the body mentions it -- the
 	 * shared node simply becomes a shared subexpression of the DAG. */
 	const ExprNode& expand(const string& name, const Definition& def, const Frame& bound) {
+		pair<string, Frame> key(name, bound);
+		ExpansionMap::const_iterator done = expansions.find(key);
+		if (done != expansions.end()) return *done->second;
+
 		check_not_circular(name);
 		expanding.push_back(name);
 		const Frame* saved_params = params;
@@ -964,6 +1013,7 @@ private:
 			params = saved_params;
 			lets.swap(saved_lets);
 			expanding.pop_back();
+			expansions[key] = &r;
 			return r;
 		} catch (ProtocolError& e) {
 			params = saved_params;
@@ -1095,7 +1145,11 @@ private:
 				                    "a real exponent would restrict the base to x>0");
 			long n = parse_int(e.list[2], "exponent");
 			if (n < -1000 || n > 1000) throw ProtocolError("exponent of '" + op + "' out of range");
-			return nodes.keep(pow(arg(e, 1), (int) n));
+			const ExprNode& base = arg(e, 1);
+			// Ibex's backward projection of x^0 takes a 0th root, which is empty, so
+			// it would discard every box and read as a proof of unsat.
+			if (n == 0) return nodes.keep(ExprConstant::new_scalar(Interval(1, 1)));
+			return nodes.keep(pow(base, (int) n));
 		}
 
 		if (op == "atan2") { want(e, 2, op); return nodes.keep(atan2(arg(e, 1), arg(e, 2))); }
@@ -1204,6 +1258,7 @@ struct State {
 
 	void reset_assertions() {
 		asserts.clear();
+		objective = Objective(); // part of the stack: (pop) restores it too
 		scopes.clear();
 		last.valid = false;
 	}
@@ -1323,6 +1378,11 @@ void flatten(const Sexp& e, Flat& out, bool negated);
 void flatten_comparison(const string& op0, const Sexp& e, Flat& out, bool negated) {
 	string op = op0;
 	if (negated) {
+		// (not (< a b c)) is (a >= b) or (b >= c): negating each link would turn
+		// that disjunction into a much stronger conjunction.
+		if (e.list.size() > 3)
+			throw ProtocolError("a negated chain of '" + op0 + "' is a disjunction; assert the "
+			                    "cases separately (push/pop)");
 		op = negate_comparison(op0);
 		if (op.empty())
 			throw ProtocolError("(not (= ...)) is a disequality, which cannot be expressed "
@@ -1332,8 +1392,11 @@ void flatten_comparison(const string& op0, const Sexp& e, Flat& out, bool negate
 	// SMT-LIB comparisons are chained: (< a b c) means a<b and b<c.
 	for (size_t k = 1; k + 1 < e.list.size(); k++) {
 		Bound b;
-		if (lift_pair(op, e.list[k], e.list[k+1], b)) out.bounds.push_back(b);
-		else out.ctrs.push_back(make_pair(op, make_pair(e.list[k], e.list[k+1])));
+		bool lifted = lift_pair(op, e.list[k], e.list[k+1], b);
+		if (lifted) out.bounds.push_back(b);
+		// A box endpoint cannot exclude itself, so a strict bound also stays a constraint.
+		if (!lifted || op == "<" || op == ">")
+			out.ctrs.push_back(make_pair(op, make_pair(e.list[k], e.list[k+1])));
 	}
 }
 
@@ -1593,16 +1656,10 @@ string do_check_sat() {
 		st.last.point = o.get_loup_point();
 	}
 
-	switch (status) {
-	case Optimizer::SUCCESS:
-	case Optimizer::UNBOUNDED_OBJ:
-		st.last.sat = true;
-		return "sat";
-	default:
-		// NO_FEASIBLE_FOUND, TIME_OUT, UNREACHED_PREC: nothing proved either way.
-		st.last.sat = false;
-		return "unknown";
-	}
+	// UNBOUNDED_OBJ only means some box has no finite lower bound on the objective,
+	// which says nothing about feasibility, so "sat" still needs a point.
+	st.last.sat = found && (status == Optimizer::SUCCESS || status == Optimizer::UNBOUNDED_OBJ);
+	return st.last.sat ? "sat" : "unknown";
 }
 
 string do_get_objectives() {
@@ -1652,7 +1709,7 @@ string do_get_model() {
 	string out = "(";
 	for (size_t i = 0; i < st.last.names.size(); i++) {
 		if (i) out += " ";
-		out += "(define-fun " + st.last.names[i] + " () Real "
+		out += "(define-fun " + smt_symbol(st.last.names[i]) + " () Real "
 		     + value_of(st.last.point[(int) i]) + ")";
 	}
 	return out + ")";
@@ -1676,7 +1733,7 @@ string do_get_value(const Sexp& req) {
 			if (st.last.names[i] == t.atom) { idx = (int) i; break; }
 		if (idx < 0) throw ProtocolError("'" + t.atom + "' is not a declared variable");
 		if (k) out += " ";
-		out += "(" + t.atom + " " + value_of(st.last.point[idx]) + ")";
+		out += "(" + smt_symbol(t.atom) + " " + value_of(st.last.point[idx]) + ")";
 	}
 	return out + ")";
 }
@@ -1704,7 +1761,7 @@ string do_get_info(const Sexp& req) {
 	for (size_t i = 0; i < st.last.names.size(); i++) {
 		const Interval& c = st.last.point[(int) i];
 		if (i) out += " ";
-		out += "(" + st.last.names[i] + " " + enclosure_bound(c.lb(), false)
+		out += "(" + smt_symbol(st.last.names[i]) + " " + enclosure_bound(c.lb(), false)
 		     + " " + enclosure_bound(c.ub(), true) + ")";
 	}
 	return out + "))";
@@ -2019,7 +2076,8 @@ string dispatch(const Sexp& req) {
 	if (head == "set-logic")      run_set_logic(req);
 	else if (head == "set-option") run_set_option(req);
 	else if (head == "set-info") {
-		if (req.list.size() != 3) throw ProtocolError("(set-info :<key> <value>) expects a keyword and a value");
+		if (req.list.size() < 2 || req.list.size() > 3)
+			throw ProtocolError("(set-info :<key> [<value>]) expects a keyword and an optional value");
 		// Metadata; recorded by nothing and refused by nothing.
 	}
 	else if (head == "declare-const") run_declare_const(req);
@@ -2223,11 +2281,11 @@ void watch_run(const string& text) {
 
 int watch_file(const string& path) {
 	string text, err;
+	FileId id = stat_id(path); // before the read, so a save during it counts as a change
 	if (!slurp(path, text, err)) {
 		warn(err);
 		return 1;
 	}
-	FileId id = stat_id(path);
 	watch_run(text);
 
 	for (;;) {

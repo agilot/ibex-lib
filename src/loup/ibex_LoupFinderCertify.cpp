@@ -68,7 +68,8 @@ std::pair<IntervalVector, double> LoupFinderCertify::find(const IntervalVector& 
 	double threshold = eps_h;
 	bool overconstrained = false;
 
-	for (int trial=0; trial<=max_activity_trials && threshold>min_activity_thershold;
+	// The first attempt always runs: eps_h may legitimately start at or below the minimum.
+	for (int trial=0; trial<=max_activity_trials && (trial==0 || threshold>min_activity_thershold);
 			trial++, threshold/=2.) {
 
 		FncActiveCtrs* af;
