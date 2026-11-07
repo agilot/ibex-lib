@@ -165,6 +165,11 @@
 //                                              prove feasibility.
 //   NO_FEASIBLE_FOUND, TIME_OUT,
 //   UNREACHED_PREC                 -> unknown  nothing was proved either way.
+//                                              get-objectives still reports the
+//                                              side the search bounded, also when
+//                                              only boxes too small to bisect are
+//                                              left, as for assertions that pin
+//                                              every variable to one point.
 //
 // "unsat" and "unknown" are therefore NOT interchangeable, and a client must not
 // read "not unsat" as "satisfiable". dReal answers delta-sat where this server

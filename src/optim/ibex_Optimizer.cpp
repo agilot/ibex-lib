@@ -182,6 +182,11 @@ void Optimizer::update_uplo() {
 		// note: we always have uplo <= uplo_of_epsboxes but we may have uplo > new_uplo, because
 		// ymax is strictly lower than the loup.
 	}
+	else if (uplo < uplo_of_epsboxes) {
+		// empty buffer and no loup: the boxes too small to bisect are all that is left of the
+		// search space, so they bound the minimum even though no feasible point was found.
+		uplo = uplo_of_epsboxes;
+	}
 
 }
 
