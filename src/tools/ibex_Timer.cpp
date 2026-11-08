@@ -10,6 +10,8 @@
 
 #include "ibex_Timer.h"
 
+#include <chrono>
+
 namespace ibex {
 
 
@@ -17,6 +19,12 @@ static int ____IGNORE___ = (StaticTimer::start(), 0);
 
 
 StaticTimer::Time StaticTimer::local_time = 0;
+
+// Wall-clock rather than CPU time: a time limit then holds for a caller that waits on
+// the search, even when the process gets less than a full core.
+static double wall_time() {
+	return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 
 Timer::Timer(): start_time(0.0), active(false) {
 }
@@ -27,21 +35,21 @@ Timer::Timer(): start_time(0.0), active(false) {
 void Timer::start(){
 	if (active==false) {
 		active = true;
-		start_time = StaticTimer::get_localtime();
+		start_time = wall_time();
 	}
 }
 
 void Timer::stop(){
 	active = false;
-	start_time = (StaticTimer::get_localtime() - start_time);
+	start_time = (wall_time() - start_time);
 }
 void Timer::restart() {
-	start_time= StaticTimer::get_localtime();
+	start_time= wall_time();
 	active =true;
 }
 double Timer::get_time() {
 	if (active) {
-		return (StaticTimer::get_localtime() - start_time);
+		return (wall_time() - start_time);
 	} else {
 		return start_time;
 	}

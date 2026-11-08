@@ -68,7 +68,7 @@ public:
 	/**
 	 * \brief Time limit.
 	 *
-	 * Maximum cpu time used by the strategy.
+	 * Maximum time (wall-clock) used by the strategy.
 	 * This parameter allows to bound time complexity.
 	 * The value can be fixed by the user.
 	 */

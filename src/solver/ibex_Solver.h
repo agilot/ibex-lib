@@ -195,7 +195,7 @@ public:
 	/**
 	 * \brief Get the time spent.
 	 *
-	 * \return the total CPU time of last call to solve(...).
+	 * \return the total (wall-clock) time of last call to solve(...).
 	 */
 	double get_time() const;
 
@@ -252,7 +252,7 @@ public:
 	boundary_test_strength boundary_test;
 
 	/**
-	 * \brief Maximum CPU time used by the solver.
+	 * \brief Maximum time (wall-clock) used by the solver.
 	 *
 	 * This parameter allows to bound running time.
 	 * The value can be fixed by the user. By default, it is -1 (no limit).

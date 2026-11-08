@@ -554,7 +554,7 @@ void Solver::report() {
 	cout << " number of pending boxes:\t";
 	if (manif->nb_pending()==0) cout << "--"; else cout << manif->nb_pending();
 	cout << endl;
-	cout << " cpu time used:\t\t\t" << time << "s";
+	cout << " time used:\t\t\t" << time << "s";
 	if (manif->time()!=time)
 		cout << " [total=" << manif->time() << "]";
 	cout << endl;

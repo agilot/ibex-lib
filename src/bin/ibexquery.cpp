@@ -1640,6 +1640,9 @@ string do_check_sat() {
 	config.set_trace(st.options.trace);
 
 	Optimizer o(config);
+	// Nothing here reads the boxes left unexplored, and the answer waits for them
+	// to be freed: copying them one by one can outlast the time the client allows.
+	o.full_COV = false;
 	Optimizer::Status status = o.optimize(sys.box);
 
 	st.last.valid = true;

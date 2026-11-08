@@ -196,7 +196,7 @@ public:
 	/**
 	 * \brief Get the time spent.
 	 *
-	 * \return the total CPU time of last call to optimize(...)
+	 * \return the total (wall-clock) time of last call to optimize(...)
 	 */
 	double get_time() const;
 
@@ -288,7 +288,7 @@ public:
 	/**
 	 * \brief Time limit.
 	 *
-	 * Maximum CPU time used by the strategy.
+	 * Maximum time (wall-clock) used by the strategy.
 	 * This parameter allows to bound time consumption.
 	 * The value can be fixed by the user.
 	 */
@@ -303,6 +303,18 @@ public:
 	 * only).
 	 */
 	bool extended_COV; // TODO: should be set in OptimizerConfig
+
+	/**
+	 * \brief Whether the COV structure holds the boxes left unexplored.
+	 *
+	 * If true (by default), every box still in the buffer when the
+	 * search stops is copied into the COV structure.
+	 * If false, the structure only holds the loup-point, and the
+	 * remaining boxes are deleted in one pass: after a long search,
+	 * copying millions of boxes one by one out of the buffer can take
+	 * seconds after the time limit.
+	 */
+	bool full_COV;
 
 	/**
 	 * \brief Whether anticipated upper bounding has to be applied.

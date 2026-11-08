@@ -48,7 +48,7 @@ Optimizer::Optimizer(int n, Ctc& ctc, Bsc& bsc, LoupFinder& finder,
                 						n(n), goal_var(goal_var),
 										ctc(ctc), bsc(bsc), loup_finder(finder), buffer(buffer),
 										eps_x(n, eps_x), rel_eps_f(rel_eps_f), abs_eps_f(abs_eps_f),
-										trace(0), timeout(-1), extended_COV(true), anticipated_upper_bounding(true),
+										trace(0), timeout(-1), extended_COV(true), full_COV(true), anticipated_upper_bounding(true),
 										status(SUCCESS),
 										uplo(NEG_INFINITY), uplo_of_epsboxes(POS_INFINITY), loup(POS_INFINITY),
 										loup_point(IntervalVector::empty(n)), initial_loup(POS_INFINITY), loup_changed(false),
@@ -538,16 +538,19 @@ Optimizer::Status Optimizer::optimize() {
 		cov->add(loup_point);
 	}
 
-	while (!buffer.empty()) {
-		Cell* cell=buffer.top();
-		if (extended_COV)
-			cov->add(cell->box);
-		else {
-			read_ext_box(cell->box,tmp);
-			cov->add(tmp);
+	if (full_COV) {
+		while (!buffer.empty()) {
+			Cell* cell=buffer.top();
+			if (extended_COV)
+				cov->add(cell->box);
+			else {
+				read_ext_box(cell->box,tmp);
+				cov->add(tmp);
+			}
+			delete buffer.pop();
 		}
-		delete buffer.pop();
-	}
+	} else
+		buffer.flush();
 
 	return status;
 }
@@ -640,7 +643,7 @@ void Optimizer::report() {
 		cout << endl;
 	}
 
-	cout << " cpu time used:\t\t\t" << time << "s";
+	cout << " time used:\t\t\t" << time << "s";
 	if (cov->time()!=time)
 		cout << " [total=" << cov->time() << "]";
 	cout << endl;

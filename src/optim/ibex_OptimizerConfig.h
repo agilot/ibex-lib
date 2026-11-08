@@ -84,7 +84,7 @@ public:
 	/**
 	 * \brief Set time limit.
 	 *
-	 * Maximum CPU time used by the strategy.
+	 * Maximum time (wall-clock) used by the strategy.
 	 * This parameter allows to bound time consumption.
 	 * The value can be fixed by the user.
 	 */
